@@ -1,7 +1,11 @@
 import axios from 'axios';
 import { config } from 'dotenv';
 
-interface singleArticleInt {
+// Load environment variables from the `.env` file
+config({ path: './env' });
+
+// Define types more comprehensively
+interface Article {
    source: {
       id: null | string;
       name: string;
@@ -15,69 +19,98 @@ interface singleArticleInt {
    content: string;
 }
 
-config({ path: './env' });
+interface SummarizedArticle {
+   title: string;
+   url: string;
+   summary: string;
+}
 
-const NEWS_API_KEY = process.env.NEWS_API_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+// Extract API keys from environment variables
+const NEWS_API_KEY = process.env.NEWS_API_KEY || '';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
-async function fetchNewApi() {
+/**
+ * Fetches articles from the News API, filtering them based on keywords related to AI and LLM.
+ */
+async function fetchArticles(): Promise<Article[]> {
    try {
-      //Using axios to fetch from my news api
-      const getResponse = await axios.get(
+      const response = await axios.get(
          `https://newsapi.org/v2/everything?q=LLM+AI+"Large Language Models"&sortBy=popularity&apiKey=${NEWS_API_KEY}`
       );
 
-      //filtering down response to specific keywords "AI", "LLM"
-      const newArticles =
-         getResponse.data &&
-         getResponse.data.articles.filter((item: singleArticleInt) => {
-            return /AI|LLM|Large Language Model|Artificial Intelligence/i.test(item.title);
-         });
-      return newArticles;
+      return response.data?.articles.filter((article: Article) =>
+         /AI|LLM|Large Language Model|Artificial Intelligence/i.test(article.title)
+      );
    } catch (error) {
-      console.log(error);
+      console.error('Error fetching news articles:', error);
+      throw new Error('Failed to fetch articles.');
    }
 }
 
-// Function to summarize articles using GPT-4 API
-async function summarizeArticles(articles: any[]) {
-   const summaries = [];
+/**
+ * Summarizes a single article using GPT-4 API.
+ */
+async function summarizeArticle(article: Article): Promise<SummarizedArticle | null> {
+   const prompt = `Summarize this news article: ${article.title}\n\n${article.description}`;
 
-   for (const article of articles) {
-      const prompt = `Summarize this news article: ${article.title}\n\n${article.description}`;
-
-      try {
-         const gptResponse = await axios.post(
-            'https://api.openai.com/v1/chat/completions',
-            {
-               model: 'gpt-4o-mini',
-               messages: [
-                  { role: 'system', content: 'You are a helpful assistant.' },
-                  { role: 'user', content: prompt },
-               ],
+   try {
+      const response = await axios.post(
+         'https://api.openai.com/v1/chat/completions',
+         {
+            model: 'gpt-4o-mini',
+            messages: [
+               { role: 'system', content: 'You are a helpful assistant.' },
+               { role: 'user', content: prompt },
+            ],
+         },
+         {
+            headers: {
+               Authorization: `Bearer ${OPENAI_API_KEY}`,
+               'Content-Type': 'application/json',
             },
-            {
-               headers: {
-                  Authorization: `Bearer ${OPENAI_API_KEY}`,
-                  'Content-Type': 'application/json',
-               },
-            }
-         );
+         }
+      );
 
-         const summary = gptResponse.data.choices[0].message.content;
-         summaries.push({
-            title: article.title,
-            url: article.url,
-            summary,
-         });
-
-         //Logging it here so we don't have to wait for everything to finish before we view our result
-         console.log(summaries);
-      } catch (error) {
-         console.error('Error summarizing article:', error);
-      }
+      const summary = response.data.choices[0].message.content;
+      return {
+         title: article.title,
+         url: article.url,
+         summary,
+      };
+   } catch (error) {
+      console.error(`Error summarizing article "${article.title}":`, error);
+      return null; // Return null if the summarization fails
    }
-   return summaries;
 }
 
-summarizeArticles(await fetchNewApi());
+/**
+ * Summarizes a list of articles.
+ */
+async function summarizeArticles(articles: Article[]): Promise<SummarizedArticle[]> {
+   const summaries = await Promise.all(articles.map(summarizeArticle));
+   return summaries.filter((summary) => summary !== null) as SummarizedArticle[];
+}
+
+/**
+ * Main function to fetch and summarize articles.
+ */
+async function main() {
+   try {
+      const articles = await fetchArticles();
+      if (!articles || articles.length === 0) {
+         console.log('No articles found related to AI or LLM.');
+         return;
+      }
+
+      console.log(`Fetched ${articles.length} articles. Summarizing...`);
+
+      const summarizedArticles = await summarizeArticles(articles);
+      summarizedArticles.forEach((article) => {
+         console.log(`\nTitle: ${article.title}\nURL: ${article.url}\nSummary: ${article.summary}`);
+      });
+   } catch (error) {
+      console.error('Error in main function:', error);
+   }
+}
+
+main();
